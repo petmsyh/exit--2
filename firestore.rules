@@ -1,0 +1,73 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // Helper function to get user role
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    // Helper function to check if user is super admin
+    function isSuperAdmin() {
+      return isSignedIn() && getUserRole() == 'superAdmin';
+    }
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return isSignedIn() && (getUserRole() == 'admin' || getUserRole() == 'superAdmin');
+    }
+    
+    // Helper function to check if user is the owner
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // All authenticated users can read user documents
+      allow read: if isSignedIn();
+      
+      // Users can update their own document
+      // Super admins can update any user document
+      allow update: if isOwner(userId) || isSuperAdmin();
+      
+      // Only super admins can create and delete users
+      allow create, delete: if isSuperAdmin();
+    }
+    
+    // Departments collection
+    match /departments/{departmentId} {
+      // All authenticated users can read departments
+      allow read: if isSignedIn();
+      
+      // Only super admins can create, update, or delete departments
+      allow create, update, delete: if isSuperAdmin();
+    }
+    
+    // Files collection
+    match /files/{fileId} {
+      // All authenticated users can read files
+      allow read: if isSignedIn();
+      
+      // Admins and super admins can create files
+      allow create: if isAdmin();
+      
+      // File owners can update within 24 hours
+      // Super admins can update anytime
+      allow update: if isSuperAdmin() || 
+                      (isOwner(resource.data.uploaderId) && 
+                       request.time < resource.data.uploadedAt + duration.value(24, 'h'));
+      
+      // File owners can delete within 24 hours
+      // Super admins can delete anytime
+      allow delete: if isSuperAdmin() || 
+                      (isOwner(resource.data.uploaderId) && 
+                       request.time < resource.data.uploadedAt + duration.value(24, 'h'));
+    }
+  }
+}
